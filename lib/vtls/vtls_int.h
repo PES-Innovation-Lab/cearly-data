@@ -147,6 +147,7 @@ struct Curl_ssl {
   struct curl_slist *(*engines_list)(struct Curl_easy *data);
 
   bool (*false_start)(void);
+  bool (*early_data)(void);
   CURLcode (*sha256sum)(const unsigned char *input, size_t inputlen,
                     unsigned char *sha256sum, size_t sha256sumlen);
 
@@ -179,6 +180,7 @@ CURLcode Curl_none_set_engine(struct Curl_easy *data, const char *engine);
 CURLcode Curl_none_set_engine_default(struct Curl_easy *data);
 struct curl_slist *Curl_none_engines_list(struct Curl_easy *data);
 bool Curl_none_false_start(void);
+bool Curl_none_early_data(void);
 void Curl_ssl_adjust_pollset(struct Curl_cfilter *cf, struct Curl_easy *data,
                               struct easy_pollset *ps);
 

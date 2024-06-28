@@ -1159,6 +1159,7 @@ const struct Curl_ssl Curl_ssl_bearssl = {
   Curl_none_set_engine_default,    /* set_engine_default */
   Curl_none_engines_list,          /* engines_list */
   Curl_none_false_start,           /* false_start */
+  Curl_none_early_data,            /* early_data */
   bearssl_sha256sum,               /* sha256sum */
   NULL,                            /* associate_connection */
   NULL,                            /* disassociate_connection */

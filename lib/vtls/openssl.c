@@ -5227,6 +5227,7 @@ const struct Curl_ssl Curl_ssl_openssl = {
   ossl_set_engine_default,  /* set_engine_default */
   ossl_engines_list,        /* engines_list */
   Curl_none_false_start,    /* false_start */
+  Curl_none_early_data,     /* early_data */
 #if (OPENSSL_VERSION_NUMBER >= 0x0090800fL) && !defined(OPENSSL_NO_SHA256)
   ossl_sha256sum,           /* sha256sum */
 #else

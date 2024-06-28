@@ -1159,6 +1159,15 @@ bool Curl_ssl_false_start(struct Curl_easy *data)
 }
 
 /*
+ * Check whether the SSL backend supports false start.
+ */
+bool Curl_ssl_early_data(struct Curl_easy *data)
+{
+  (void)data;
+  return Curl_ssl->early_data();
+}
+
+/*
  * Default implementations for unsupported functions.
  */
 
@@ -1245,6 +1254,11 @@ struct curl_slist *Curl_none_engines_list(struct Curl_easy *data UNUSED_PARAM)
 }
 
 bool Curl_none_false_start(void)
+{
+  return FALSE;
+}
+
+bool Curl_none_early_data(void)
 {
   return FALSE;
 }
@@ -1339,6 +1353,7 @@ static const struct Curl_ssl Curl_ssl_multi = {
   Curl_none_set_engine_default,      /* set_engine_default */
   Curl_none_engines_list,            /* engines_list */
   Curl_none_false_start,             /* false_start */
+  Curl_none_early_data,              /* early_data */
   NULL,                              /* sha256sum */
   NULL,                              /* associate_connection */
   NULL,                              /* disassociate_connection */

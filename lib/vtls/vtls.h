@@ -180,6 +180,7 @@ CURLcode Curl_pin_peer_pubkey(struct Curl_easy *data,
 bool Curl_ssl_cert_status_request(void);
 
 bool Curl_ssl_false_start(struct Curl_easy *data);
+bool Curl_ssl_early_data(struct Curl_easy *data);
 
 #define SSL_SHUTDOWN_TIMEOUT 10000 /* ms */
 

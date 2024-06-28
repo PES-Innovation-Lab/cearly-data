@@ -2224,6 +2224,9 @@ typedef enum {
   /* maximum number of keepalive probes (Linux, *BSD, macOS, etc.) */
   CURLOPT(CURLOPT_TCP_KEEPCNT, CURLOPTTYPE_LONG, 326),
 
+  /* Set if we should enable TLS1.3 Early Data */
+  CURLOPT(CURLOPT_SSL_EARLYDATA, CURLOPTTYPE_LONG, 327),
+
   CURLOPT_LASTENTRY /* the last unused */
 } CURLoption;
 

@@ -2077,6 +2077,16 @@ CURLcode Curl_vsetopt(struct Curl_easy *data, CURLoption option, va_list param)
 
     data->set.ssl.falsestart = (0 != va_arg(param, long));
     break;
+  case CURLOPT_SSL_EARLYDATA:
+      /*
+       * Enable TLS1.3 early data
+       */
+    if(!Curl_ssl_early_data(data)) {
+      result = CURLE_NOT_BUILT_IN;
+      break;
+    }
+    data->set.ssl.earlydata = (0 != va_arg(param, long));
+    break;
   case CURLOPT_CERTINFO:
 #ifdef USE_SSL
     if(Curl_ssl_supports(data, SSLSUPP_CERTINFO))
