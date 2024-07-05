@@ -1883,7 +1883,11 @@ static CURLcode ossl_shutdown(struct Curl_cfilter *cf,
   size_t i;
 
   DEBUGASSERT(octx);
-  if(!octx->ssl || cf->shutdown) {
+
+  /* If we're in ssl_connection_deferred we hadn't
+   * yet formed a connection, so we were effectively always shutdown
+   */
+  if(!octx->ssl || cf->shutdown || connssl->state == ssl_connection_deferred) {
     *done = TRUE;
     goto out;
   }
@@ -4021,7 +4025,7 @@ static CURLcode ossl_connect_step1(struct Curl_cfilter *cf,
     infof(data, VTLS_INFOF_ALPN_OFFER_1STR, proto.data);
   }
 #endif
-  connssl->connecting_state = ssl_connect_2;
+  connssl->connecting_state = ssl_connect_1_5;
   return CURLE_OK;
 }
 
@@ -4734,6 +4738,7 @@ static CURLcode ossl_connect_common(struct Curl_cfilter *cf,
 {
   CURLcode result = CURLE_OK;
   struct ssl_connect_data *connssl = cf->ctx;
+  struct ossl_ctx *octx = (struct ossl_ctx *)connssl->backend;
   curl_socket_t sockfd = Curl_conn_cf_get_socket(cf, data);
   int what;
 
@@ -4758,8 +4763,24 @@ static CURLcode ossl_connect_common(struct Curl_cfilter *cf,
       goto out;
   }
 
-  while(ssl_connect_2 == connssl->connecting_state) {
+  if(connssl->connecting_state == ssl_connect_1_5) {
+    if(data->set.ssl.earlydata && SSL_version(octx->ssl) == TLS1_3_VERSION &&
+        octx->reused_session &&
+        SSL_SESSION_get_max_early_data(SSL_get_session(octx->ssl))) {
+      /* the user wants to send early data
+       * finish the connection in ossl_send
+       */
+      infof(data, "Sending early data");
+      *done = TRUE;
+      connssl->state = ssl_connection_deferred;
+      return result;
+    }
+    else {
+      connssl->connecting_state = ssl_connect_2;
+    }
+  }
 
+  while(ssl_connect_2 == connssl->connecting_state) {
     /* check allowed time left */
     const timediff_t timeout_ms = Curl_timeleft(data, NULL, TRUE);
 
@@ -4862,6 +4883,28 @@ static bool ossl_data_pending(struct Curl_cfilter *cf,
   return FALSE;
 }
 
+static bool ossl_early_data(void)
+{
+  return TRUE;
+}
+
+static const char *ossl_get_early_data_status(SSL *ssl)
+{
+  switch(SSL_get_early_data_status(ssl)) {
+    case SSL_EARLY_DATA_ACCEPTED:
+      return "SSL_EARLY_DATA_ACCEPTED";
+    case SSL_EARLY_DATA_REJECTED:
+      return "SSL_EARLY_DATA_REJECTED";
+    case SSL_EARLY_DATA_NOT_SENT:
+      return "SSL_EARLY_DATA_NOT_SENT";
+    default:
+      return "Unknown status";
+  }
+}
+
+typedef int ossl_writer_func(SSL *, const void *, size_t, size_t *);
+
+
 static ssize_t ossl_send(struct Curl_cfilter *cf,
                          struct Curl_easy *data,
                          const void *mem,
@@ -4878,13 +4921,35 @@ static ssize_t ossl_send(struct Curl_cfilter *cf,
   struct ssl_connect_data *connssl = cf->ctx;
   struct ossl_ctx *octx = (struct ossl_ctx *)connssl->backend;
 
+  size_t written;
+  bool write_early_data =
+      ssl_connection_deferred == connssl->state;
+  ossl_writer_func *ssl_writer =
+      write_early_data ? SSL_write_early_data : SSL_write_ex;
+  const char *ssl_writer_str =
+    write_early_data ? "SSL_write_early_data" : "SSL_write_ex";
+
   (void)data;
   DEBUGASSERT(octx);
 
   ERR_clear_error();
 
   memlen = (len > (size_t)INT_MAX) ? INT_MAX : (int)len;
-  rc = SSL_write(octx->ssl, mem, memlen);
+
+  if(write_early_data &&
+      (int)SSL_SESSION_get_max_early_data(SSL_get_session(octx->ssl))
+                              < memlen) {
+    connssl->connecting_state = ssl_connect_2;
+    *curlcode = ossl_connect(cf, data);
+    if(*curlcode) {
+      written = -1;
+      goto out;
+    }
+    ssl_writer = SSL_write_ex;
+    write_early_data = FALSE;
+  }
+
+  rc = ssl_writer(octx->ssl, mem, (size_t)memlen, &written);
 
   if(rc <= 0) {
     err = SSL_get_error(octx->ssl, rc);
@@ -4896,7 +4961,7 @@ static ssize_t ossl_send(struct Curl_cfilter *cf,
          should be called again later. This is basically an EWOULDBLOCK
          equivalent. */
       *curlcode = CURLE_AGAIN;
-      rc = -1;
+      written = -1;
       goto out;
     case SSL_ERROR_SYSCALL:
     {
@@ -4904,7 +4969,7 @@ static ssize_t ossl_send(struct Curl_cfilter *cf,
 
       if(octx->io_result == CURLE_AGAIN) {
         *curlcode = CURLE_AGAIN;
-        rc = -1;
+        written = -1;
         goto out;
       }
       sslerror = ERR_get_error();
@@ -4916,35 +4981,50 @@ static ssize_t ossl_send(struct Curl_cfilter *cf,
         msnprintf(error_buffer, sizeof(error_buffer), "%s",
                   SSL_ERROR_to_str(err));
 
-      failf(data, OSSL_PACKAGE " SSL_write: %s, errno %d",
-            error_buffer, sockerr);
+      failf(data, OSSL_PACKAGE " %s: %s, errno %d",
+            ssl_writer_str, error_buffer, sockerr);
       *curlcode = CURLE_SEND_ERROR;
-      rc = -1;
+      written = -1;
       goto out;
     }
     case SSL_ERROR_SSL: {
       /*  A failure in the SSL library occurred, usually a protocol error.
           The OpenSSL error queue contains more information on the error. */
       sslerror = ERR_get_error();
-      failf(data, "SSL_write() error: %s",
+      failf(data, "%s error: %s",
+            ssl_writer_str,
             ossl_strerror(sslerror, error_buffer, sizeof(error_buffer)));
+      /* We haven't yet formed a connection at all,
+       * so we were effectively always shutdown
+       */
       *curlcode = CURLE_SEND_ERROR;
-      rc = -1;
+      written = -1;
       goto out;
     }
     default:
       /* a true error */
-      failf(data, OSSL_PACKAGE " SSL_write: %s, errno %d",
-            SSL_ERROR_to_str(err), SOCKERRNO);
+      failf(data, OSSL_PACKAGE " %s: %s, errno %d",
+            ssl_writer_str, SSL_ERROR_to_str(err), SOCKERRNO);
       *curlcode = CURLE_SEND_ERROR;
-      rc = -1;
+      written = -1;
       goto out;
     }
   }
-  *curlcode = CURLE_OK;
+
+  if(write_early_data) {
+    /* The handshake was deferred until now to send early data */
+    connssl->connecting_state = ssl_connect_2;
+    *curlcode = ossl_connect(cf, data);
+    DEBUGASSERT(connssl->state == ssl_connection_complete);
+    infof(data, OSSL_PACKAGE " SSL_write_early_data: %s",
+          ossl_get_early_data_status(octx->ssl));
+  }
+  else {
+    *curlcode = CURLE_OK;
+  }
 
 out:
-  return (ssize_t)rc; /* number of bytes */
+  return (ssize_t)written; /* number of bytes */
 }
 
 static ssize_t ossl_recv(struct Curl_cfilter *cf,
@@ -5227,7 +5307,7 @@ const struct Curl_ssl Curl_ssl_openssl = {
   ossl_set_engine_default,  /* set_engine_default */
   ossl_engines_list,        /* engines_list */
   Curl_none_false_start,    /* false_start */
-  Curl_none_early_data,     /* early_data */
+  ossl_early_data,     /* early_data */
 #if (OPENSSL_VERSION_NUMBER >= 0x0090800fL) && !defined(OPENSSL_NO_SHA256)
   ossl_sha256sum,           /* sha256sum */
 #else
