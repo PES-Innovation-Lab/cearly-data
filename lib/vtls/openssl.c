@@ -5011,16 +5011,21 @@ static ssize_t ossl_send(struct Curl_cfilter *cf,
     }
   }
 
+  *curlcode = CURLE_OK;
   if(write_early_data) {
     /* The handshake was deferred until now to send early data */
     connssl->connecting_state = ssl_connect_2;
     *curlcode = ossl_connect(cf, data);
     DEBUGASSERT(connssl->state == ssl_connection_complete);
+
+    if(!*curlcode &&
+        SSL_get_early_data_status(octx->ssl) == SSL_EARLY_DATA_REJECTED) {
+      *curlcode = CURLE_AGAIN;
+      written = -1;
+    }
+
     infof(data, OSSL_PACKAGE " SSL_write_early_data: %s",
           ossl_get_early_data_status(octx->ssl));
-  }
-  else {
-    *curlcode = CURLE_OK;
   }
 
 out:
