@@ -3472,6 +3472,7 @@ CURLcode Curl_ossl_ctx_init(struct ossl_ctx *octx,
   SSL_METHOD_QUAL SSL_METHOD *req_method = NULL;
   ctx_option_t ctx_options = 0;
   void *ssl_sessionid = NULL;
+  struct ssl_connect_data *connssl = cf->ctx;
   struct ssl_primary_config *conn_config = Curl_ssl_cf_get_primary_config(cf);
   struct ssl_config_data *ssl_config = Curl_ssl_cf_get_config(cf, data);
   const long int ssl_version_min = conn_config->version;
@@ -3966,7 +3967,22 @@ CURLcode Curl_ossl_ctx_init(struct ossl_ctx *octx,
     }
     Curl_ssl_sessionid_unlock(data);
   }
+#ifdef HAS_ALPN
+  if(octx->reused_session) {
+    /* Set some parameters that could be used by early data */
+    if(connssl->alpn) {
+      const unsigned char *neg_protocol;
+      size_t len;
+      SSL_SESSION_get0_alpn_selected(SSL_get_session(octx->ssl), &neg_protocol,
+                                     &len);
 
+      result = Curl_alpn_set_negotiated(cf, data, neg_protocol, len);
+      if(result) {
+        return result;
+      }
+    }
+  }
+#endif
   return CURLE_OK;
 }
 
