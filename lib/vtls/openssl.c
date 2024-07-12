@@ -4793,6 +4793,7 @@ static CURLcode ossl_connect_common(struct Curl_cfilter *cf,
     }
     else {
       connssl->connecting_state = ssl_connect_2;
+      data->set.ssl.earlydata = 0;
     }
   }
 

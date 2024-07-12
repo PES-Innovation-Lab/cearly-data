@@ -49,9 +49,10 @@
 #include "dynbuf.h"
 #include "headers.h"
 /* The last 3 #include files should be in this order */
-#include "curl_printf.h"
 #include "curl_memory.h"
+#include "curl_printf.h"
 #include "memdebug.h"
+#include "vtls/vtls_int.h"
 
 #if (NGHTTP2_VERSION_NUM < 0x010c00)
 #error too old nghttp2 version, upgrade!
@@ -2392,6 +2393,15 @@ static CURLcode cf_h2_connect(struct Curl_cfilter *cf,
   struct cf_call_data save;
 
   if(cf->connected) {
+    *done = TRUE;
+    return CURLE_OK;
+  }
+  /*
+   * The connection is not complete if early data is enabled
+   * Therefore, we do not need to run ingress and egress
+   */
+  printf("hello chat\n");
+  if(data->set.ssl.earlydata) {
     *done = TRUE;
     return CURLE_OK;
   }
