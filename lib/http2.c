@@ -2400,7 +2400,7 @@ static CURLcode cf_h2_connect(struct Curl_cfilter *cf,
    * The connection is not complete if early data is enabled
    * Therefore, we do not need to run ingress and egress
    */
-  printf("hello chat\n");
+
   if(data->set.ssl.earlydata) {
     *done = TRUE;
     return CURLE_OK;

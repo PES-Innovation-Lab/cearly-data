@@ -5068,16 +5068,6 @@ static ssize_t ossl_recv(struct Curl_cfilter *cf,
 
   ERR_clear_error();
 
-  if(connssl->state == ssl_connection_deferred) {
-    /* We have deferred the connection inorder to send early data
-     * But this function does a read operation, if we're sending early data,
-     * SSL_write_early_data needs to be the first IO call, we uphold that
-     * contract here
-     */
-    size_t written;
-    SSL_write_early_data(octx->ssl, NULL, 0, &written);
-  }
-
   buffsize = (buffersize > (size_t)INT_MAX) ? INT_MAX : (int)buffersize;
   nread = (ssize_t)SSL_read(octx->ssl, buf, buffsize);
 
