@@ -2396,14 +2396,16 @@ static CURLcode cf_h2_connect(struct Curl_cfilter *cf,
     *done = TRUE;
     return CURLE_OK;
   }
-  /*
-   * The connection is not complete if early data is enabled
-   * Therefore, we do not need to run ingress and egress
-   */
 
-  if(data->set.ssl.earlydata) {
-    *done = TRUE;
-    return CURLE_OK;
+  /*
+   * Do not run ingress and egress if early data is enabled
+   */
+  if(cf->next->next) {
+    struct ssl_connect_data *connssl = cf->next->next->ctx;
+    if(connssl->state == ssl_connection_deferred) {
+      *done = TRUE;
+      return CURLE_OK;
+    }
   }
 
   /* Connect the lower filters first */
