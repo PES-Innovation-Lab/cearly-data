@@ -2400,7 +2400,7 @@ static CURLcode cf_h2_connect(struct Curl_cfilter *cf,
   /*
    * Do not run ingress and egress if early data is enabled
    */
-  if(cf->next->next) {
+  if(Curl_conn_cf_is_ssl(cf) && cf->next->next) {
     struct ssl_connect_data *connssl = cf->next->next->ctx;
     if(connssl->state == ssl_connection_deferred) {
       *done = TRUE;
