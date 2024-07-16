@@ -3472,6 +3472,7 @@ CURLcode Curl_ossl_ctx_init(struct ossl_ctx *octx,
   SSL_METHOD_QUAL SSL_METHOD *req_method = NULL;
   ctx_option_t ctx_options = 0;
   void *ssl_sessionid = NULL;
+  struct ssl_connect_data *connssl = cf->ctx;
   struct ssl_primary_config *conn_config = Curl_ssl_cf_get_primary_config(cf);
   struct ssl_config_data *ssl_config = Curl_ssl_cf_get_config(cf, data);
   const long int ssl_version_min = conn_config->version;
@@ -3966,7 +3967,22 @@ CURLcode Curl_ossl_ctx_init(struct ossl_ctx *octx,
     }
     Curl_ssl_sessionid_unlock(data);
   }
+#ifdef HAS_ALPN
+  if(octx->reused_session) {
+    /* Set some parameters that could be used by early data */
+    if(connssl->alpn) {
+      const unsigned char *neg_protocol;
+      size_t len;
+      SSL_SESSION_get0_alpn_selected(SSL_get_session(octx->ssl), &neg_protocol,
+                                     &len);
 
+      result = Curl_alpn_set_negotiated(cf, data, neg_protocol, len);
+      if(result) {
+        return result;
+      }
+    }
+  }
+#endif
   return CURLE_OK;
 }
 
@@ -4025,7 +4041,7 @@ static CURLcode ossl_connect_step1(struct Curl_cfilter *cf,
     infof(data, VTLS_INFOF_ALPN_OFFER_1STR, proto.data);
   }
 #endif
-  connssl->connecting_state = ssl_connect_1_5;
+  connssl->connecting_state = ssl_connect_1_epending;
   return CURLE_OK;
 }
 
@@ -4761,9 +4777,7 @@ static CURLcode ossl_connect_common(struct Curl_cfilter *cf,
     result = ossl_connect_step1(cf, data);
     if(result)
       goto out;
-  }
 
-  if(connssl->connecting_state == ssl_connect_1_5) {
     if(data->set.ssl.earlydata && SSL_version(octx->ssl) == TLS1_3_VERSION &&
         octx->reused_session &&
         SSL_SESSION_get_max_early_data(SSL_get_session(octx->ssl))) {
@@ -4883,11 +4897,6 @@ static bool ossl_data_pending(struct Curl_cfilter *cf,
   return FALSE;
 }
 
-static bool ossl_early_data(void)
-{
-  return TRUE;
-}
-
 static const char *ossl_get_early_data_status(SSL *ssl)
 {
   switch(SSL_get_early_data_status(ssl)) {
@@ -4928,6 +4937,8 @@ static ssize_t ossl_send(struct Curl_cfilter *cf,
       write_early_data ? SSL_write_early_data : SSL_write_ex;
   const char *ssl_writer_str =
     write_early_data ? "SSL_write_early_data" : "SSL_write_ex";
+
+  connssl->connecting_state = ssl_connect_1_esending;
 
   (void)data;
   DEBUGASSERT(octx);
@@ -5013,6 +5024,7 @@ static ssize_t ossl_send(struct Curl_cfilter *cf,
 
   *curlcode = CURLE_OK;
   if(write_early_data) {
+    infof(data, "Early Data Sent, Finishing Connection");
     /* The handshake was deferred until now to send early data */
     connssl->connecting_state = ssl_connect_2;
     *curlcode = ossl_connect(cf, data);
@@ -5050,6 +5062,20 @@ static ssize_t ossl_recv(struct Curl_cfilter *cf,
   DEBUGASSERT(octx);
 
   ERR_clear_error();
+
+  if(connssl->connecting_state == ssl_connect_1_epending) {
+    /* We have deferred the connection inorder to send early data
+     * But this function does a read operation, if we're sending early data,
+     * SSL_write_early_data needs to be the first IO call, we uphold that
+     * contract here
+     */
+    size_t written;
+    SSL_write_early_data(octx->ssl, NULL, 0, &written);
+    connssl->connecting_state = ssl_connect_1_esending;
+    *curlcode = CURLE_AGAIN;
+    nread = -1;
+    goto out;
+  }
 
   buffsize = (buffersize > (size_t)INT_MAX) ? INT_MAX : (int)buffersize;
   nread = (ssize_t)SSL_read(octx->ssl, buf, buffsize);

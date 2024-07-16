@@ -67,7 +67,8 @@ CURLcode Curl_alpn_set_negotiated(struct Curl_cfilter *cf,
 /* enum for the nonblocking SSL connection state machine */
 typedef enum {
   ssl_connect_1,
-  ssl_connect_1_5,
+  ssl_connect_1_epending,
+  ssl_connect_1_esending,
   ssl_connect_2,
   ssl_connect_3,
   ssl_connect_done

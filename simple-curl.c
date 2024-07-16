@@ -13,7 +13,7 @@ void doit(CURLSH* share, char *url)  {
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
   curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
   curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_EARLYDATA);
-  curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+  curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
   curl_easy_setopt(curl, CURLOPT_SHARE, share);
 
   curl_easy_perform(curl);
@@ -24,6 +24,7 @@ int main(void) {
   curl_share_setopt(share, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
 
   doit(share, "https://hashcode.theinnovationlab.in/");
-  doit(share, "https://hashcode.theinnovationlab.in/register");
+  printf("\n\n\n\n");
+  doit(share, "https://hashcode.theinnovationlab.in/");
   return 0;
 }
