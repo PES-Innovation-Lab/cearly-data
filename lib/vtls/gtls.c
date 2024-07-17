@@ -1846,7 +1846,7 @@ static ssize_t gtls_send(struct Curl_cfilter *cf,
     }
     rc = len;
     infof(data, "Early Data: %s",
-          (gnutls_session_get_flags(session) != GNUTLS_SFLAGS_EARLY_DATA)?
+          (gnutls_session_get_flags(session) & GNUTLS_SFLAGS_EARLY_DATA)?
         "accepted" : "rejected");
   }
 
