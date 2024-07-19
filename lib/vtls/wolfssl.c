@@ -613,28 +613,25 @@ static CURLcode Curl_wolfssl_add_session(struct Curl_cfilter *cf,
                                          const struct ssl_peer *peer,
                                          WOLFSSL_SESSION *session)
 {
+  const struct ssl_config_data *config;
   CURLcode result = CURLE_OK;
-  struct ssl_connect_data *connssl = cf->ctx;
-  struct wolfssl_ctx *backend =
-      (struct wolfssl_ctx *)connssl->backend;
-  const struct ssl_config_data *ssl_config = Curl_ssl_cf_get_config(cf, data);
-  if(ssl_config->primary.cache_session) {
-    /* wolfSSL_get1_session allocates memory that has to be freed. */
-    WOLFSSL_SESSION *our_ssl_sessionid = wolfSSL_get1_session(backend->handle);
 
-    if(our_ssl_sessionid) {
-      Curl_ssl_sessionid_lock(data);
-      /* call takes ownership of `our_ssl_sessionid` */
-      result = Curl_ssl_set_sessionid(cf, data, &connssl->peer,
-                                      our_ssl_sessionid, 0,
-                                      wolfssl_session_free);
-      Curl_ssl_sessionid_unlock(data);
-      if(result) {
-        failf(data, "failed to store ssl session");
-        return result;
-      }
-    }
+  if(!cf || !data)
+    goto out;
+
+  config = Curl_ssl_cf_get_config(cf, data);
+  if(config->primary.cache_session) {
+
+    Curl_ssl_sessionid_lock(data);
+    result = Curl_ssl_set_sessionid(cf, data, peer, session, 0,
+                                    wolfssl_session_free);
+    session = NULL; /* call has taken ownership */
+    Curl_ssl_sessionid_unlock(data);
   }
+
+out:
+  if(session)
+    wolfssl_session_free(session, 0);
   return result;
 }
 
@@ -644,7 +641,7 @@ static int wolfssl_new_session_cb(WOLFSSL *ssl, WOLFSSL_SESSION *ssl_sessionid)
   struct Curl_easy *data;
   struct ssl_connect_data *connssl;
 
-  cf = (struct Curl_cfilter*) SSL_get_app_data(ssl);
+  cf = (struct Curl_cfilter*) wolfSSL_get_app_data(ssl);
   connssl = cf? cf->ctx : NULL;
   data = connssl? CF_DATA_CURRENT(cf) : NULL;
   Curl_wolfssl_add_session(cf, data, &connssl->peer, ssl_sessionid);
@@ -940,7 +937,7 @@ wolfssl_connect_step1(struct Curl_cfilter *cf, struct Curl_easy *data)
   }
 #endif /* HAVE_SECURE_RENEGOTIATION */
 
-  wolfSSL_CTX_sess_set_new_cb(connssl->backend, wolfssl_new_session_cb);
+  wolfSSL_CTX_sess_set_new_cb(backend->ctx, wolfssl_n`ew_session_cb);
 
   /* Check if there is a cached ID we can/should use here! */
   if(ssl_config->primary.cache_session) {
