@@ -86,6 +86,13 @@ certificate that supports client authentication in the OS certificate store it
 could be a privacy violation and unexpected.
 (Added in 7.77.0)
 
+## CURLSSLOPT_EARLYDATA
+
+Tell libcurl to try sending application data as TLS1.3 early data. This option
+is only supported for OpenSSL, WolfSSL and GnuTLS. This option only works when
+using HTTP/1.1 without a proxy otherwise its a no-op.
+(Added in 8.10.0)
+
 # DEFAULT
 
 0
