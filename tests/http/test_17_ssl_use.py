@@ -63,16 +63,9 @@ class TestSSLUse:
         count = 3
         exp_resumed = 'Resumed'
         xargs = ['--sessionid', '--tls-max', tls_max, f'--tlsv{tls_max}']
-        if env.curl_uses_lib('gnutls'):
-            if tls_max == '1.3':
-                exp_resumed = 'Initial'  # 1.2 works in GnuTLS, but 1.3 does not, TODO
         if env.curl_uses_lib('libressl'):
             if tls_max == '1.3':
                 exp_resumed = 'Initial'  # 1.2 works in LibreSSL, but 1.3 does not, TODO
-        if env.curl_uses_lib('wolfssl'):
-            xargs = ['--sessionid', f'--tlsv{tls_max}']
-            if tls_max == '1.3':
-                exp_resumed = 'Initial'  # 1.2 works in wolfSSL, but 1.3 does not, TODO
         if env.curl_uses_lib('rustls-ffi'):
             exp_resumed = 'Initial'  # rustls does not support sessions, TODO
         if env.curl_uses_lib('bearssl') and tls_max == '1.3':
