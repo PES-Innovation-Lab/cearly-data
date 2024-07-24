@@ -4893,6 +4893,15 @@ static const char *ossl_get_early_data_status(const SSL *ssl)
 
 typedef int ossl_writer_func(SSL *, const void *, size_t, size_t *);
 
+static int ossl_write_ex(SSL *ssl, const void *buf, size_t num,
+                         size_t *written)
+{
+  int ret;
+  ret = SSL_write(ssl, buf, (int)num);
+  *written = (size_t)ret;
+  return ret;
+}
+
 static ssize_t ossl_send(struct Curl_cfilter *cf,
                          struct Curl_easy *data,
                          const void *mem,
@@ -4916,7 +4925,7 @@ static ssize_t ossl_send(struct Curl_cfilter *cf,
 #ifdef HAS_EARLYDATA
     write_early_data ? SSL_write_early_data :
 #endif
-    SSL_write_ex;
+    ossl_write_ex;
   const char *ssl_writer_str =
     write_early_data ? "SSL_write_early_data" : "SSL_write_ex";
 
