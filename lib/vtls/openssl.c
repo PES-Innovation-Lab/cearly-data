@@ -4730,7 +4730,6 @@ static CURLcode ossl_connect_common(struct Curl_cfilter *cf,
 {
   CURLcode result = CURLE_OK;
   struct ssl_connect_data *connssl = cf->ctx;
-  struct ossl_ctx *octx = (struct ossl_ctx *)connssl->backend;
   curl_socket_t sockfd = Curl_conn_cf_get_socket(cf, data);
   int what;
 
