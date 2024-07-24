@@ -2689,7 +2689,7 @@ static void ossl_trace(int direction, int ssl_ver, int content_type,
 
 #undef HAS_EARLYDATA
 /* Check for OpenSSL 1.1.1 which has early data support. */
-#if OPENSSL_VERSION_NUMBER >= 0x10100010L && defined(TLS1_3_VERSION) &&        \
+#if OPENSSL_VERSION_NUMBER >= 0x10100010L && defined(TLS1_3_VERSION) && \
     !defined(OPENSSL_IS_BORINGSSL) && !defined(OPENSSL_IS_AWSLC)
 #  define HAS_EARLYDATA 1
 #endif
