@@ -4733,7 +4733,10 @@ static CURLcode ossl_connect_common(struct Curl_cfilter *cf,
   curl_socket_t sockfd = Curl_conn_cf_get_socket(cf, data);
   int what;
 
+#ifdef HAS_EARLYDATA
+  struct ossl_ctx *octx = (struct ossl_ctx *)connssl->backend;
   DEBUGASSERT(octx);
+#endif
 
   /* check if the connection has already been established */
   if(ssl_connection_complete == connssl->state) {
