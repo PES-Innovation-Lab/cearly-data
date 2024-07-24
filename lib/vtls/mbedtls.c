@@ -1492,9 +1492,8 @@ static ssize_t mbed_recv(struct Curl_cfilter *cf, struct Curl_easy *data,
   if(ret <= 0) {
     CURL_TRC_CF(data, cf, "mbedtls_ssl_read(len=%zu) -> -0x%04X",
                 buffersize, -ret);
-#if defined(TLS13_SUPPORT)
-    /* We were waiting for application data but got
-       a NewSessionTicket instead. */
+#if defined(TLS13_SUPPORT) && defined(MBEDTLS_SSL_SESSION_TICKETS)
+    /* We received a NewSessionTicket instead of application data */
     if(ret == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
       Curl_mbed_set_session_cb(cf, data);
 #endif
