@@ -765,6 +765,13 @@ mbed_connect_step1(struct Curl_cfilter *cf, struct Curl_easy *data)
   }
 #endif
 
+#ifdef MBEDTLS_SSL_EARLY_DATA
+  /* Set the early data mode if we are required to send early data */
+  if(data->set.ssl.earlydata) {
+    mbedtls_ssl_conf_early_data(&backend->config,
+                                MBEDTLS_SSL_EARLY_DATA_ENABLED);
+  }
+#endif
 
   mbedtls_ssl_init(&backend->ssl);
   backend->initialized = TRUE;
@@ -838,6 +845,7 @@ mbed_connect_step1(struct Curl_cfilter *cf, struct Curl_easy *data)
 #endif
 
   /* Check if there is a cached ID we can/should use here! */
+  connssl->reused_session = FALSE;
   if(ssl_config->primary.cache_session) {
     void *old_session = NULL;
 
@@ -849,6 +857,7 @@ mbed_connect_step1(struct Curl_cfilter *cf, struct Curl_easy *data)
         failf(data, "mbedtls_ssl_set_session returned -0x%x", -ret);
         return CURLE_SSL_CONNECT_ERROR;
       }
+      connssl->reused_session = TRUE;
       infof(data, "mbedTLS reusing session");
     }
     Curl_ssl_sessionid_unlock(data);
@@ -918,7 +927,7 @@ mbed_connect_step1(struct Curl_cfilter *cf, struct Curl_easy *data)
     }
   }
 
-  connssl->connecting_state = ssl_connect_2;
+  connssl->connecting_state = ssl_connect_1_epending;
 
   return CURLE_OK;
 }
@@ -1179,8 +1188,8 @@ static void mbedtls_session_free(void *sessionid, size_t idsize)
   free(sessionid);
 }
 
-static CURLcode
-mbed_connect_step3(struct Curl_cfilter *cf, struct Curl_easy *data)
+static CURLcode Curl_mbed_set_session_cb(struct Curl_cfilter *cf,
+                                         struct Curl_easy *data)
 {
   CURLcode retcode = CURLE_OK;
   struct ssl_connect_data *connssl = cf->ctx;
@@ -1188,7 +1197,6 @@ mbed_connect_step3(struct Curl_cfilter *cf, struct Curl_easy *data)
     (struct mbed_ssl_backend_data *)connssl->backend;
   struct ssl_config_data *ssl_config = Curl_ssl_cf_get_config(cf, data);
 
-  DEBUGASSERT(ssl_connect_3 == connssl->connecting_state);
   DEBUGASSERT(backend);
 
   if(ssl_config->primary.cache_session) {
@@ -1216,14 +1224,61 @@ mbed_connect_step3(struct Curl_cfilter *cf, struct Curl_easy *data)
                                      our_ssl_sessionid, 0,
                                      mbedtls_session_free);
     Curl_ssl_sessionid_unlock(data);
-    if(retcode)
-      return retcode;
   }
 
+  return retcode;
+}
+
+static CURLcode
+mbed_connect_step3(struct Curl_cfilter *cf, struct Curl_easy *data)
+{
+  CURLcode retcode = CURLE_OK;
+  struct ssl_connect_data *connssl = cf->ctx;
+  struct mbed_ssl_backend_data *backend =
+    (struct mbed_ssl_backend_data *)connssl->backend;
+
+  DEBUGASSERT(ssl_connect_3 == connssl->connecting_state);
+  DEBUGASSERT(backend);
+
+#ifdef TLS13_SUPPORT
+  /* For TLS 1.3 connections, we should only set the session when
+   * we recieve the NewSessionTicket post handshake message. */
+  if(mbedtls_ssl_get_version_number(&backend->ssl) ==
+     MBEDTLS_SSL_VERSION_TLS1_3)
+     goto out;
+#endif
+
+  retcode = Curl_mbed_set_session_cb(cf, data);
+
+out:
   connssl->connecting_state = ssl_connect_done;
 
-  return CURLE_OK;
+  return retcode;
 }
+
+#ifdef MBEDTLS_SSL_EARLY_DATA
+static const char *mbed_get_early_data_status(
+  mbedtls_ssl_context *ssl)
+{
+  switch(mbedtls_ssl_get_early_data_status(ssl)) {
+    case MBEDTLS_SSL_EARLY_DATA_STATUS_NOT_INDICATED:
+      return "Early data was not sent";
+    case MBEDTLS_SSL_EARLY_DATA_STATUS_REJECTED:
+      return "Early data was rejected";
+    case MBEDTLS_SSL_EARLY_DATA_STATUS_ACCEPTED:
+      return "Early data was accepted";
+    /* case MBEDTLS_ERR_SSL_BAD_INPUT_DATA: */
+    default:
+      return "Unknown status";
+  }
+}
+#endif /* MBEDTLS_SSL_EARLY_DATA */
+
+typedef int mbed_writer_func(mbedtls_ssl_context *,
+                             const unsigned char *, size_t);
+
+static CURLcode mbedtls_connect(struct Curl_cfilter *cf,
+                                struct Curl_easy *data);
 
 static ssize_t mbed_send(struct Curl_cfilter *cf, struct Curl_easy *data,
                          const void *mem, size_t len,
@@ -1234,21 +1289,64 @@ static ssize_t mbed_send(struct Curl_cfilter *cf, struct Curl_easy *data,
     (struct mbed_ssl_backend_data *)connssl->backend;
   int ret = -1;
 
+  bool write_early_data =
+    ssl_connection_deferred == connssl->state;
+  mbed_writer_func *ssl_writer =
+#ifdef MBEDTLS_SSL_EARLY_DATA
+    write_early_data ? mbedtls_ssl_write_early_data :
+#endif
+    mbedtls_ssl_write;
+  const char *ssl_writer_str =
+    write_early_data ? "mbedtls_ssl_write_early_data" : "mbedtls_ssl_write";
+
+  connssl->connecting_state = ssl_connect_1_esending;
+
   (void)data;
   DEBUGASSERT(backend);
-  ret = mbedtls_ssl_write(&backend->ssl, (unsigned char *)mem, len);
+  ret = ssl_writer(&backend->ssl, (unsigned char *)mem, len);
 
-  if(ret < 0) {
-    CURL_TRC_CF(data, cf, "mbedtls_ssl_write(len=%zu) -> -0x%04X",
-                len, -ret);
+  if(ret < 0
+#ifdef MBEDTLS_SSL_EARLY_DATA
+      && (ret != MBEDTLS_ERR_SSL_CANNOT_WRITE_EARLY_DATA)
+#endif
+    ) {
+    CURL_TRC_CF(data, cf, "%s(len=%zu) -> -0x%04X",
+                ssl_writer_str, len, -ret);
     *curlcode = ((ret == MBEDTLS_ERR_SSL_WANT_WRITE)
 #ifdef TLS13_SUPPORT
       || (ret == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
 #endif
       )? CURLE_AGAIN : CURLE_SEND_ERROR;
     ret = -1;
+    goto out;
   }
 
+  *curlcode = CURLE_OK;
+#ifdef MBEDTLS_SSL_EARLY_DATA
+  if(write_early_data) {
+    /* The connection was deferred until now to send early data */
+    connssl->connecting_state = ssl_connect_2;
+    *curlcode = mbedtls_connect(cf, data);
+    DEBUGASSERT(ssl_connection_complete == connssl->state);
+
+    if(!*curlcode
+        /* It is not possible to write early data, so we try again
+           using a standard post handshake write */
+        && ((ret == MBEDTLS_ERR_SSL_CANNOT_WRITE_EARLY_DATA)
+        /* Server rejected the early data */
+        || (mbedtls_ssl_get_early_data_status(&backend->ssl) ==
+            MBEDTLS_SSL_EARLY_DATA_STATUS_REJECTED))
+      ) {
+      *curlcode = CURLE_AGAIN;
+      ret = -1;
+    }
+#endif
+
+    infof(data, "mbedTLS: mbedtls_ssl_write_early_data: %s",
+          mbed_get_early_data_status(&backend->ssl));
+  }
+
+out:
   return ret;
 }
 
@@ -1271,7 +1369,10 @@ static CURLcode mbedtls_shutdown(struct Curl_cfilter *cf,
 
   DEBUGASSERT(backend);
 
-  if(!backend->initialized || cf->shutdown) {
+  /* If we are in ssl_connection_deferred we haven't yet formed a connection,
+     so we were effectively always shutdown */
+  if(!backend->initialized || cf->shutdown ||
+     connssl->state == ssl_connection_deferred) {
     *done = TRUE;
     return CURLE_OK;
   }
@@ -1391,6 +1492,12 @@ static ssize_t mbed_recv(struct Curl_cfilter *cf, struct Curl_easy *data,
   if(ret <= 0) {
     CURL_TRC_CF(data, cf, "mbedtls_ssl_read(len=%zu) -> -0x%04X",
                 buffersize, -ret);
+#if defined(TLS13_SUPPORT)
+    /* We were waiting for application data but got
+       a NewSessionTicket instead. */
+    if(ret == MBEDTLS_ERR_SSL_RECEIVED_NEW_SESSION_TICKET)
+      Curl_mbed_set_session_cb(cf, data);
+#endif
     if(ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY)
       return 0;
     *curlcode = ((ret == MBEDTLS_ERR_SSL_WANT_READ)
@@ -1474,9 +1581,13 @@ mbed_connect_common(struct Curl_cfilter *cf, struct Curl_easy *data,
 {
   CURLcode retcode;
   struct ssl_connect_data *connssl = cf->ctx;
+  struct mbed_ssl_backend_data *backend =
+    (struct mbed_ssl_backend_data *)connssl->backend;
   curl_socket_t sockfd = Curl_conn_cf_get_socket(cf, data);
   timediff_t timeout_ms;
   int what;
+
+  DEBUGASSERT(backend);
 
   /* check if the connection has already been established */
   if(ssl_connection_complete == connssl->state) {
@@ -1496,6 +1607,23 @@ mbed_connect_common(struct Curl_cfilter *cf, struct Curl_easy *data,
     retcode = mbed_connect_step1(cf, data);
     if(retcode)
       return retcode;
+
+  #if defined(TLS13_SUPPORT) && defined(MBEDTLS_SSL_EARLY_DATA)
+    if(data->set.ssl.earlydata &&
+      (mbedtls_ssl_get_version_number(&backend->ssl) ==
+       MBEDTLS_SSL_VERSION_TLS1_3) && connssl->reused_session) {
+      /* we want to send early data, finish the handshake in mbed_send */
+      infof(data, "Sending early data");
+      *done = TRUE;
+      connssl->state = ssl_connection_deferred;
+      return CURLE_OK;
+    }
+    else {
+      connssl->connecting_state = ssl_connect_2;
+    }
+#else
+    connssl->connecting_state = ssl_connect_2;
+#endif
   }
 
   while(ssl_connect_2 == connssl->connecting_state) {
